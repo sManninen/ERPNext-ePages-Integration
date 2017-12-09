@@ -1,0 +1,46 @@
+body {
+	margin: 20px;
+}
+
+.return {
+	margin-top: 40px;
+	border-bottom: 5px solid red;
+}
+
+.button {
+	width: 80px;
+}
+
+.buttonBig {
+	margin-top: 50px;
+	width: 150px;
+	height: 40px;
+}
+
+.row {
+	width: 500px;
+	margin-bottom: 5px;
+}
+
+.col-1 {
+	width: 150px;
+	display: inline-block;
+}
+
+.col-2 {
+	width: 220px;
+	display: inline-block;
+}
+
+.col-3 {
+	width: 80px;
+	display: inline-block;
+}
+
+#textfield1 {
+	
+}
+
+label, input {
+	
+}
