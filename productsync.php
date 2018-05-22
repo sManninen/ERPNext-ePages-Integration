@@ -4,16 +4,17 @@ session_start();
 if (isset($_REQUEST['action'])) {
     switch ($_REQUEST['action']) {
         case 'products':
-			abc();
+			syncProducts();
             break;
     }
 }
 
-function abc(){
+function syncProducts(){
 	
 	set_time_limit(600);
 	
-	$productCount = 0;
+	$erp_productCount = 0;
+	$epages_productCount = 0;
 
 	//======================login to erpnext======================
 	$COOKIE_FILE = dirname(__FILE__)."/cookie.txt";
@@ -51,6 +52,17 @@ function abc(){
 		echo"could not connect to ERPNext.";
 		return;
 	}
+	
+	//======================get erpnext item names======================
+	$erpParentItemNames = array();
+	foreach($erp_parentItems["data"] as $value) {
+		array_push($erpParentItemNames, $value["item_name"]);
+	}
+
+	$erpVariantItemNames = array();
+	foreach($erp_variantItems["data"] as $value) {
+		array_push($erpVariantItemNames, $value["item_name"]);
+	}
 
 	//======================get itemcount from epages======================
 	$authorization = 'Authorization: Bearer '.$_SESSION['epagestoken'].'';
@@ -67,17 +79,6 @@ function abc(){
 		curl_close($ch);
 		echo"could not connect to ePages.";
 		return;
-	}
-
-	//======================get erpnext item names======================
-	$erpParentItemNames = array();
-	foreach($erp_parentItems["data"] as $value) {
-		array_push($erpParentItemNames, $value["item_name"]);
-	}
-
-	$erpVariantItemNames = array();
-	foreach($erp_variantItems["data"] as $value) {
-		array_push($erpVariantItemNames, $value["item_name"]);
 	}
 
 	//======================get items from epages======================
@@ -104,7 +105,27 @@ function abc(){
 		$count2 --;
 
 	}
+	
+	//================get epages item names===========================
+	$epagesItemNames = array();
+	foreach($temparray as $value) {
+		array_push($epagesItemNames, $value["name"]);
+	}
+	
+	//=================gets the variant attributes from erpnext=========================
+	$ch = curl_init('http://localhost:8080/api/resource/Item%20Attribute?&fields=["*"]&limit_page_length=1500]'); 
+	curl_setopt ($ch, CURLOPT_COOKIEFILE, $COOKIE_FILE); 
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	$result=curl_exec($ch);
 
+	$erp_attributes = json_decode($result, true);
+	$erp_attributeNames = array();
+	
+	foreach($erp_attributes["data"] as $value){
+		array_push($erp_attributeNames, $value["name"]);
+	}
+
+	//================move items from epages to erpnext=====================
 	foreach($temparray as $value) {
 	
 		//creates a normal/parent product
@@ -116,7 +137,7 @@ function abc(){
 		);
 	
 		//gets the variant data and makes the item a parent if it has variants
-		if($value["productVariationType"] == "master") {
+		if($value["productVariationType"] == "master") {		
 			$ch = curl_init(''.$value["links"]["1"]["href"].'');
 			curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json' , $authorization )); 
 			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -137,6 +158,7 @@ function abc(){
 				"item_name" => ''.$value["name"].'',
 				"item_code" => ''.$value["name"].'',
 				"item_group" => "Products",
+				"standard_rate" => ''.$value["priceInfo"]["price"]["amount"].'',
 				"variant_of" => ''.$value["name"].'',
 				"attributes" => []
 				);
@@ -151,8 +173,31 @@ function abc(){
 					array_push($tempVariantArray["data"], $variantArray);
 				}
 			}
+			
+			//moves the variant attributes
+			foreach($parentArray["data"]["attributes"] as $value2){
+				if (!in_array($value2["attribute"], $erp_attributeNames)) {					
+					$attributeArray = array();
+					$attributeArray["data"] = array(
+					"name" => ''.$value2["attribute"].'',
+					"attribute_name" => ''.$value2["attribute"].''
+					);
+					
+					$data = json_encode($attributeArray["data"]);
+
+					$ch = curl_init(''.$_SESSION['erpapiurl'].'resource/Item%20Attribute');
+					curl_setopt($ch, CURLOPT_COOKIEFILE, $COOKIE_FILE);
+					curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json'));
+					curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+					curl_setopt($ch, CURLOPT_POST, true);
+					curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+
+					$result=curl_exec($ch);
+					array_push($erp_attributeNames, $value2["attribute"]);
+				};
+			}			
 		}
-	
+		
 		//moves the parent products
 		if (!in_array($value["name"], $erpParentItemNames)) {
 	
@@ -167,13 +212,84 @@ function abc(){
 
 			$result=curl_exec($ch);
 	
-			$productCount ++;
+			$erp_productCount ++;
 		}
 	}
 
 	// moves the variant products
 	if ($tempVariantArray["data"]) {
-		foreach ($tempVariantArray["data"] as $index => $value) {	
+					
+		//gets the variant attribute values from erpnext.
+		$ch = curl_init('http://localhost:8080/api/resource/Item%20Attribute%20Value?&fields=["*"]&limit_page_length=1500]'); 
+		curl_setopt ($ch, CURLOPT_COOKIEFILE, $COOKIE_FILE); 
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+		$result=curl_exec($ch);
+
+		$erp_attributeValues = json_decode($result, true);
+		$erp_attributeValueNames = array();
+		
+		function array_push_assoc($array, $key, $value){
+		$array[$key] = $value;
+		return $array;
+		}
+		
+		foreach($erp_attributeValues["data"] as $value){
+			$erp_attributeValueNames = array_push_assoc($erp_attributeValueNames, $value["attribute_value"], $value["parent"]);
+		}
+		
+		foreach ($tempVariantArray["data"] as $index => $value) {					
+			foreach($value["attributes"] as $value2) {			
+			//moves the variant attribute values
+				if (!in_array($value2["attribute_value"], $erp_attributeValueNames)){
+					$abbr = substr($value2["attribute_value"], 0, 3);
+					
+					$attributeValueArray = array();
+					$attributeValueArray["data"] = array(
+					"attribute_value" => ''.$value2["attribute_value"].'',
+					"abbr" => ''.$abbr.'',
+					"parent" => ''.$value2["attribute"].'',
+					"parenttype" => "Item Attribute"
+					);
+					
+					$data = json_encode($attributeValueArray["data"]);
+
+					$ch = curl_init(''.$_SESSION['erpapiurl'].'resource/Item%20Attribute%20Value');
+					curl_setopt($ch, CURLOPT_COOKIEFILE, $COOKIE_FILE);
+					curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json'));
+					curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+					curl_setopt($ch, CURLOPT_POST, true);
+					curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+
+					$result=curl_exec($ch);
+					$erp_attributeValueNames = array_push_assoc($erp_attributeValueNames, $value2["attribute_value"], $value2["attribute"]);
+				}
+				else if (in_array($value2["attribute_value"], $erp_attributeValueNames)) { //checks if the attribute value is in erpnext...
+					if ($erp_attributeValueNames[$value2["attribute_value"]] != $value2["attribute"]) { //...and if it's for the same parent attribute.
+						$abbr = substr($value["attributes"]["attribute_value"], 0, 2);
+						
+						$attributeValueArray = array();
+						$attributeValueArray["data"] = array(
+						"attribute_value" => ''.$value2["attribute_value"].'',
+						"abbr" => ''.$abbr.'',
+						"parent" => ''.$value2["attribute"].''
+						);
+						
+						$data = json_encode($attributeValueArray["data"]);
+
+						$ch = curl_init(''.$_SESSION['erpapiurl'].'resource/Item%20Attribute%20Value');
+						curl_setopt($ch, CURLOPT_COOKIEFILE, $COOKIE_FILE);
+						curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json'));
+						curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+						curl_setopt($ch, CURLOPT_POST, true);
+						curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+
+						$result=curl_exec($ch);
+						$erp_attributeValueNames = array_push_assoc($erp_attributeValueNames, $value2["attribute_value"], $value2["attribute"]);
+					}
+				};
+			}
+			
+			//moves the variant products
 			$data = json_encode($tempVariantArray["data"][$index]);
 
 			$ch = curl_init(''.$_SESSION['erpapiurl'].'resource/Item');
@@ -185,10 +301,41 @@ function abc(){
 
 			$result=curl_exec($ch);
 		
-			$productCount ++;
+			$erp_productCount ++;
 		}
 	}
+	
+	//===================move items from erpnext to epages=======================
+	//variants cannot be created in epages through the api.
+	foreach($erp_parentItems["data"] as $value){
+	
+		if(!in_array($value["item_name"], $epagesItemNames)) {
+			$itemArray = array (
+			"productNumber" => ''.$value["item_name"].'',
+			"name" => ''.$value["item_name"].'',
+			"shortDescription" => "testituote2",
+			"description" => "testituote2",
+			"manufacturer" => "testituote2",
+			"price" => ''.$value["standard_rate"].'',
+			"searchKeywords" => ["testituote2"],
+			"visible" => 1
+			);
+			
+			$data = json_encode($itemArray);
+			
+			$ch = curl_init(''.$_SESSION['epagesapiurl'].'products');
+			curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json' , $authorization));
+			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+			curl_setopt($ch, CURLOPT_POST, true);
+			curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+			
+			$result=curl_exec($ch);
+			
+			$epages_productCount ++;	
+		}		
+	}	
+	
 	curl_close($ch);
-	echo "$productCount items created.";
+	echo "$erp_productCount items created in ERPNext.\n$epages_productCount items created in ePages.";
 }
 ?>
