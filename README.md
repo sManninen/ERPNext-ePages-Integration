@@ -1,1 +1,1 @@
-# ERPNext_ePages_Integraatio
+# ERPNext/ePages integration
