@@ -333,7 +333,7 @@ function syncProducts(){
 			
 			$epages_productCount ++;	
 		}		
-	}	
+	}
 	
 	curl_close($ch);
 	echo "$erp_productCount items created in ERPNext.\n$epages_productCount items created in ePages.";

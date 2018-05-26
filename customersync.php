@@ -4,16 +4,17 @@ session_start();
 if (isset($_REQUEST['action'])) {
     switch ($_REQUEST['action']) {
         case 'customers':
-			def();
+			syncCustomers();
             break;
     }
 }
 
-function def(){
+function syncCustomers(){
 	
 	set_time_limit(600);
 	
-	$customerCount = 0;
+	$erp_customersMoved = 0;
+	$epages_customersMoved = 0;
 
 	//======================login to erpnext======================
 	$COOKIE_FILE = dirname(__FILE__)."/cookie.txt";
@@ -29,7 +30,7 @@ function def(){
 	$result = curl_exec($ch);
 
 	//======================get customers from erpnext======================
-	$ch = curl_init(''.$_SESSION['erpapiurl'].'resource/Customer?fields=["customer_name","name"]&limit_page_length=1500'); 
+	$ch = curl_init(''.$_SESSION['erpapiurl'].'resource/Customer?fields=["*"]&limit_page_length=1500'); 
 	curl_setopt ($ch, CURLOPT_COOKIEFILE, $COOKIE_FILE); 
 	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 	$result=curl_exec($ch);
@@ -42,6 +43,14 @@ function def(){
 		echo"could not connect to ERPNext.";
 		return;
 	}
+	
+	//======================get customer addresses from erpnext======================
+	$ch = curl_init(''.$_SESSION['erpapiurl'].'resource/Address?fields=["*"]&limit_page_length=1500'); 
+	curl_setopt ($ch, CURLOPT_COOKIEFILE, $COOKIE_FILE); 
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+	$result=curl_exec($ch);
+
+	$erp_addresses = json_decode($result, true);
 
 	//======================get customer count from epages======================
 	$authorization = 'Authorization: Bearer '.$_SESSION['epagestoken'].'';
@@ -89,6 +98,13 @@ function def(){
 		$count2 --;
 
 	}
+	
+	//get epages customer numbers
+	$epages_customerNumbers = array ();
+	foreach($temparray as $value){
+		array_push($epages_customerNumbers, $value["customerNumber"]);
+	}
+	
 
 	foreach($temparray as $value) {
 	
@@ -186,10 +202,50 @@ function def(){
 				$result=curl_exec($ch);
 			}
 	
-			$customerCount ++;
+			$erp_customersMoved ++;
 		}
 	}
+	
+	
+	//===================move customers from erpnext to epages=======================
+	//customers in erpnext must have a number at the end of their name that will be compared with epages customer numbers. Customers without a number won't be moved.
+	foreach($erp_customers["data"] as $value){
+		$splitName = explode(" ",$value["customer_name"]);
+		if((ctype_digit(end($splitName))) && !in_array(end($splitName), $epages_customerNumbers)) {
+			$epages_newCustomer = array (
+			"customerNumber" => ''.end($splitName).''
+			);
+			$epages_newCustomer["billingAddress"] = array (
+			"firstName" => ''.$splitName[0].''
+			);
+			if (sizeof($splitName) > 2){
+			$epages_newCustomer["billingAddress"]["lastName"] = ''.$splitName[1].'';
+			};
+			
+			foreach($erp_addresses["data"] as $value2) {
+				if(($value2["customer"] == $value["customer_name"]) && ($value2["is_primary_address"] == true)){
+					$epages_newCustomer["billingAddress"]["street"] = $value2["address_line1"];
+					$epages_newCustomer["billingAddress"]["city"] = $value2["city"];
+					//$epages_newCustomer["billingAddress"]["country"] = $value2["country"]; //requires full country name -> country code mapping.
+					$epages_newCustomer["billingAddress"]["mobilePhoneNumber"] = $value2["phone"];
+				};			
+			};			
+			
+			$data = json_encode($epages_newCustomer);
+			
+			$ch = curl_init(''.$_SESSION['epagesapiurl'].'customers');
+			curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json' , $authorization));
+			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+			curl_setopt($ch, CURLOPT_POST, true);
+			curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+			
+			$result=curl_exec($ch);
+			
+			$epages_customersMoved ++;	
+		}
+	}
+	
 	curl_close($ch);
-	echo "$customerCount customers created.";
+	echo "$erp_customersMoved customers created in ERPNext.\n$epages_customersMoved customers created in ePages.";
 }
 ?>
