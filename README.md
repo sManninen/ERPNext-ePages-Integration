@@ -1,2 +1,2 @@
 # ERPNext/ePages integration
-![Screenshot](screenshot.png)
+![](screenshot.PNG)
